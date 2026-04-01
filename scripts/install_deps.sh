@@ -11,4 +11,4 @@ sudo apt-get install libassimp-dev
 pip install -r requirements.txt
 
 pip uninstall pillow
-CC="cc -mavx2" pip install -U --force-reinstall pillow-simd
+CC="cc -mavx2" pip install -U --force-reinstall pillow-simd -i https://pypi.tuna.tsinghua.edu.cn/simple 

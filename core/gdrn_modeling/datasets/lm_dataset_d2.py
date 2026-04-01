@@ -543,6 +543,8 @@ for obj in ref.lm_full.objects:
         cur_ann_file = osp.join(DATASETS_ROOT, f"BOP_DATASETS/lm/image_set/{obj}_{split}.txt")
         ann_files = [cur_ann_file]
 
+        if not osp.exists(cur_ann_file):
+            continue
         im_ids = []
         with open(cur_ann_file, "r") as f:
             for line in f:

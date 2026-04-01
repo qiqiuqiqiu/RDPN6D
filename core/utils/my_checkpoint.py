@@ -3,7 +3,10 @@ from fvcore.common.file_io import PathManager
 from detectron2.checkpoint import DetectionCheckpointer
 from mmcv.runner import _load_checkpoint
 from torch.nn.parallel import DataParallel, DistributedDataParallel
-from pytorch_lightning.lite.wrappers import _LiteModule
+try:
+    from pytorch_lightning.lite.wrappers import _LiteModule
+except Exception:
+    _LiteModule = None
 
 
 class MyCheckpointer(DetectionCheckpointer):
@@ -14,7 +17,11 @@ class MyCheckpointer(DetectionCheckpointer):
 
     def __init__(self, model, save_dir="", *, save_to_disk=None, **checkpointables):
         # HACK: deal with lite model
-        if isinstance(model, (DistributedDataParallel, DataParallel, _LiteModule)):
+        if isinstance(model, (DistributedDataParallel, DataParallel)):
+            model = model.module
+        elif _LiteModule is not None and isinstance(model, _LiteModule):
+            model = model.module
+        elif hasattr(model, "module"):
             model = model.module
         super().__init__(
             model,
