@@ -258,17 +258,21 @@ def get_lm_metadata(obj_names, ref_key):
     cur_sym_infos = {}  # label based key
     loaded_models_info = data_ref.get_models_info()
 
+    actual_obj_names = []
     for i, obj_name in enumerate(obj_names):
         obj_id = data_ref.obj2id[obj_name]
+        if str(obj_id) not in loaded_models_info:
+            continue
+        actual_obj_names.append(obj_name)
         model_info = loaded_models_info[str(obj_id)]
         if "symmetries_discrete" in model_info or "symmetries_continuous" in model_info:
             sym_transforms = misc.get_symmetry_transformations(model_info, max_sym_disc_step=0.01)
             sym_info = np.array([sym["R"] for sym in sym_transforms], dtype=np.float32)
         else:
             sym_info = None
-        cur_sym_infos[i] = sym_info
+        cur_sym_infos[len(actual_obj_names) - 1] = sym_info
 
-    meta = {"thing_classes": obj_names, "sym_infos": cur_sym_infos}
+    meta = {"thing_classes": actual_obj_names, "sym_infos": cur_sym_infos}
     return meta
 
 

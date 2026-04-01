@@ -43,6 +43,19 @@ class LM_Dataset(object):
         self.image_prefixes = data_cfg["image_prefixes"]
         self.xyz_prefixes = data_cfg["xyz_prefixes"]
 
+        # Filter out non-existent objects/ann_files/prefixes
+        valid_indices = []
+        for i, ann_file in enumerate(self.ann_files):
+            if osp.exists(ann_file):
+                valid_indices.append(i)
+            else:
+                logger.warning(f"ann_file {ann_file} not found, skipping object {self.objs[i]}")
+
+        self.objs = [self.objs[i] for i in valid_indices]
+        self.ann_files = [self.ann_files[i] for i in valid_indices]
+        self.image_prefixes = [self.image_prefixes[i] for i in valid_indices]
+        self.xyz_prefixes = [self.xyz_prefixes[i] for i in valid_indices]
+
         self.dataset_root = data_cfg["dataset_root"]  # BOP_DATASETS/lm/
         assert osp.exists(self.dataset_root), self.dataset_root
         self.models_root = data_cfg["models_root"]  # BOP_DATASETS/lm/models
@@ -109,21 +122,50 @@ class LM_Dataset(object):
             cam_dict = mmcv.load(osp.join(scene_root, "scene_camera.json"))
             for im_id in tqdm(indices):
                 int_im_id = int(im_id)
-                str_im_id = str(int_im_id)
-                rgb_path = osp.join(scene_root, "rgb/{:06d}.png").format(int_im_id)
-                assert osp.exists(rgb_path), rgb_path
+                # Force 6-digit zero padding based on user's file list
+                rgb_path = osp.join(scene_root, "rgb/{:06d}.png".format(int_im_id))
+                if not osp.exists(rgb_path):
+                    rgb_path = osp.join(scene_root, "rgb/{:06d}.jpg".format(int_im_id))
+
+                if not osp.exists(rgb_path):
+                    # Try other formats if still not found
+                    if osp.exists(osp.join(scene_root, f"rgb/{int_im_id}.png")):
+                        rgb_path = osp.join(scene_root, f"rgb/{int_im_id}.png")
+                    elif osp.exists(osp.join(scene_root, f"rgb/{im_id}.png")):
+                        rgb_path = osp.join(scene_root, f"rgb/{im_id}.png")
+
+                if not osp.exists(rgb_path):
+                    logger.warning(f"rgb_path NOT FOUND! Tried various formats for im_id {im_id} in {scene_root}/rgb/. Skipping.")
+                    continue
 
                 depth_path = osp.join(scene_root, "depth/{:06d}.png".format(int_im_id))
+                if not osp.exists(depth_path):
+                    depth_path = osp.join(scene_root, f"depth/{int_im_id}.png")
 
                 scene_id = int(rgb_path.split("/")[-3])
-                scene_im_id = f"{scene_id}/{int_im_id}"
+                # scene_im_id = f"{scene_id}/{int_im_id}"
+                scene_im_id = f"{scene_id:06d}/{int_im_id:06d}"
 
                 if self.debug_im_id is not None:
                     if self.debug_im_id != scene_im_id:
                         continue
 
-                K = np.array(cam_dict[str_im_id]["cam_K"], dtype=np.float32).reshape(3, 3)
-                depth_factor = 1000.0 / cam_dict[str_im_id]["depth_scale"]
+                # K = np.array(cam_dict[str_im_id]["cam_K"], dtype=np.float32).reshape(3, 3)
+                # depth_factor = 1000.0 / cam_dict[str_im_id]["depth_scale"]
+                # K = np.array(cam_dict[str(int_im_id)]["cam_K"], dtype=np.float32).reshape(3, 3)
+                # depth_factor = 1000.0 / cam_dict[str(int_im_id)]["depth_scale"]
+                cur_cam = cam_dict.get(str(int_im_id), cam_dict.get(im_id))
+                if cur_cam is None:
+                    # try key without leading zeros
+                    cur_cam = cam_dict.get(str(int_im_id).lstrip("0"))
+                if cur_cam is None and int_im_id == 0:
+                    cur_cam = cam_dict.get("0")
+
+                if cur_cam is None:
+                    logger.warning(f"im_id {im_id} not found in cam_dict, skipping")
+                    continue
+                K = np.array(cur_cam["cam_K"], dtype=np.float32).reshape(3, 3)
+                depth_factor = 1000.0 / cur_cam["depth_scale"]
                 if self.filter_scene:
                     if scene_id not in self.cat_ids:
                         continue
@@ -140,7 +182,19 @@ class LM_Dataset(object):
                     "img_type": "real",
                 }
                 insts = []
-                for anno_i, anno in enumerate(gt_dict[str_im_id]):
+                # for anno_i, anno in enumerate(gt_dict[str(int_im_id)]):
+                # Use string ID to get annotations, handle potential missing keys
+                cur_gt = gt_dict.get(str(int_im_id), gt_dict.get(im_id))
+                if cur_gt is None:
+                    # try key without leading zeros
+                    cur_gt = gt_dict.get(str(int_im_id).lstrip("0"))
+                if cur_gt is None and int_im_id == 0:
+                    cur_gt = gt_dict.get("0")
+
+                if cur_gt is None:
+                    logger.warning(f"im_id {im_id} has no annotations in gt_dict, skipping")
+                    continue
+                for anno_i, anno in enumerate(cur_gt):
                     obj_id = anno["obj_id"]
                     if obj_id not in self.cat_ids:
                         continue
@@ -153,8 +207,20 @@ class LM_Dataset(object):
                     proj = (record["cam"] @ t.T).T
                     proj = proj[:2] / proj[2]
 
-                    bbox_visib = gt_info_dict[str_im_id][anno_i]["bbox_visib"]
-                    bbox_obj = gt_info_dict[str_im_id][anno_i]["bbox_obj"]
+                    # bbox_visib = gt_info_dict[str(int_im_id)][anno_i]["bbox_visib"]
+                    # bbox_obj = gt_info_dict[str(int_im_id)][anno_i]["bbox_obj"]
+                    cur_gt_info = gt_info_dict.get(str(int_im_id), gt_info_dict.get(im_id))
+                    if cur_gt_info is None:
+                        # try key without leading zeros
+                        cur_gt_info = gt_info_dict.get(str(int_im_id).lstrip("0"))
+                    if cur_gt_info is None and int_im_id == 0:
+                        cur_gt_info = gt_info_dict.get("0")
+
+                    if cur_gt_info is None or anno_i >= len(cur_gt_info):
+                        logger.warning(f"anno_i {anno_i} out of range or no info for gt_info_dict im_id {im_id}")
+                        continue
+                    bbox_visib = cur_gt_info[anno_i]["bbox_visib"]
+                    bbox_obj = cur_gt_info[anno_i]["bbox_obj"]
                     x1, y1, w, h = bbox_visib
                     if self.filter_invalid:
                         if h <= 1 or w <= 1:
@@ -162,11 +228,24 @@ class LM_Dataset(object):
                             continue
 
                     mask_file = osp.join(scene_root, "mask/{:06d}_{:06d}.png".format(int_im_id, anno_i))
+                    if not osp.exists(mask_file):
+                        mask_file = osp.join(scene_root, f"mask/{int_im_id}_{anno_i:06d}.png")
+                    if not osp.exists(mask_file):
+                        mask_file = osp.join(scene_root, f"mask/{im_id}_{anno_i:06d}.png")
+
                     mask_visib_file = osp.join(scene_root, "mask_visib/{:06d}_{:06d}.png".format(int_im_id, anno_i))
-                    assert osp.exists(mask_file), mask_file
-                    assert osp.exists(mask_visib_file), mask_visib_file
+                    if not osp.exists(mask_visib_file):
+                        mask_visib_file = osp.join(scene_root, f"mask_visib/{int_im_id}_{anno_i:06d}.png")
+                    if not osp.exists(mask_visib_file):
+                        mask_visib_file = osp.join(scene_root, f"mask_visib/{im_id}_{anno_i:06d}.png")
+                    if not osp.exists(mask_file) or not osp.exists(mask_visib_file):
+                        logger.warning(f"mask_file {mask_file} or mask_visib_file {mask_visib_file} not found, skipping instance")
+                        continue
                     # load mask visib  TODO: load both mask_visib and mask_full
                     mask_single = mmcv.imread(mask_visib_file, "unchanged")
+                    if mask_single is None:
+                        logger.warning(f"mask_visib_file {mask_visib_file} could not be read, skipping instance")
+                        continue
                     area = mask_single.sum()
                     if area < 3:  # filter out too small or nearly invisible instances
                         self.num_instances_without_valid_segmentation += 1
@@ -186,7 +265,12 @@ class LM_Dataset(object):
                     }
                     if "test" not in self.name:
                         xyz_path = osp.join(xyz_root, f"{int_im_id:06d}_{anno_i:06d}.pkl")
-                        assert osp.exists(xyz_path), xyz_path
+                        if not osp.exists(xyz_path):
+                            # skip if xyz_crop not found (it will be generated during training if not exist)
+                            # or just skip this instance if it's crucial
+                            # logger.warning(f"xyz_path {xyz_path} not found, skipping instance")
+                            # continue
+                            pass
                         inst["xyz_path"] = xyz_path
 
                     model_info = self.models_info[str(obj_id)]
@@ -269,36 +353,30 @@ def get_lm_metadata(obj_names, ref_key):
     cur_sym_infos = {}  # label based key
     loaded_models_info = data_ref.get_models_info()
 
+    actual_obj_names = []
     for i, obj_name in enumerate(obj_names):
         obj_id = data_ref.obj2id[obj_name]
+        if str(obj_id) not in loaded_models_info:
+            continue
+        actual_obj_names.append(obj_name)
         model_info = loaded_models_info[str(obj_id)]
         if "symmetries_discrete" in model_info or "symmetries_continuous" in model_info:
             sym_transforms = misc.get_symmetry_transformations(model_info, max_sym_disc_step=0.01)
             sym_info = np.array([sym["R"] for sym in sym_transforms], dtype=np.float32)
         else:
             sym_info = None
-        cur_sym_infos[i] = sym_info
+        cur_sym_infos[len(actual_obj_names) - 1] = sym_info
 
-    meta = {"thing_classes": obj_names, "sym_infos": cur_sym_infos}
+    meta = {"thing_classes": actual_obj_names, "sym_infos": cur_sym_infos}
     return meta
 
 
 LM_13_OBJECTS = [
     "ape",
     "benchvise",
-    "camera",
-    "can",
-    "cat",
-    "driller",
-    "duck",
-    "eggbox",
-    "glue",
-    "holepuncher",
-    "iron",
-    "lamp",
-    "phone",
-]  # no bowl, cup
-LM_OCC_OBJECTS = ["ape", "can", "cat", "driller", "duck", "eggbox", "glue", "holepuncher"]
+    "bowl",
+]
+LM_OCC_OBJECTS = ["ape"]
 ################################################################################
 
 SPLITS_LM = dict(

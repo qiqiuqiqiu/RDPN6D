@@ -209,8 +209,12 @@ class GDRN_Lite(LightningLite):
             optimizer=optimizer,
             scheduler=scheduler,
         )
-        if hasattr(self._precision_plugin, "scaler"):
-            extra_ckpt_dict["gradscaler"] = self._precision_plugin.scaler
+        # if hasattr(self._precision_plugin, "scaler"):
+        #     extra_ckpt_dict["gradscaler"] = self._precision_plugin.scaler
+        if hasattr(self, "precision_plugin") and hasattr(self.precision_plugin, "scaler"):
+            extra_ckpt_dict["gradscaler"] = self.precision_plugin.scaler
+        elif hasattr(self, "strategy") and hasattr(self.strategy, "precision_plugin") and hasattr(self.strategy.precision_plugin, "scaler"):
+            extra_ckpt_dict["gradscaler"] = self.strategy.precision_plugin.scaler
 
         checkpointer = MyCheckpointer(
             model,

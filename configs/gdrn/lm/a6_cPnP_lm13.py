@@ -32,7 +32,7 @@ SOLVER = dict(
 )
 
 DATASETS = dict(
-    TRAIN=("lm_13_train", "lm_imgn_13_train_1k_per_obj"),
+    TRAIN=("lm_13_train",),
     TEST=("lm_13_test",),
     DET_FILES_TEST=("datasets/BOP_DATASETS/lm/test/test_bboxes/bbox_faster_all.json",),
 )

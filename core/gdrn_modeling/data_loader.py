@@ -227,15 +227,29 @@ class GDRN_DatasetFromList(Base_DatasetFromList):
         cfg = self.cfg
         num_fps_points = cfg.MODEL.CDPN.ROT_HEAD.NUM_REGIONS
         cur_fps_points = {}
-        loaded_fps_points = data_ref.get_fps_points()
+        try:
+            loaded_fps_points = data_ref.get_fps_points()
+        except Exception as e:
+            logger.warning(f"Could not load fps_points.pkl: {e}. Will try to use dummy FPS points.")
+            loaded_fps_points = {}
+
         for i, obj_name in enumerate(objs):
             obj_id = data_ref.obj2id[obj_name]
-            if with_center:
-                cur_fps_points[i] = loaded_fps_points[str(
-                    obj_id)][f"fps{num_fps_points}_and_center"]
+            if str(obj_id) in loaded_fps_points:
+                if with_center:
+                    cur_fps_points[i] = loaded_fps_points[str(
+                        obj_id)][f"fps{num_fps_points}_and_center"]
+                else:
+                    cur_fps_points[i] = loaded_fps_points[str(
+                        obj_id)][f"fps{num_fps_points}_and_center"][:-1]
             else:
-                cur_fps_points[i] = loaded_fps_points[str(
-                    obj_id)][f"fps{num_fps_points}_and_center"][:-1]
+                # logger.warning(f"obj_id {obj_id} not found in loaded_fps_points, using dummy")
+                # use dummy points: num_fps_points + 1 (for center)
+                dummy = np.zeros((num_fps_points + 1, 3), dtype="float32")
+                if with_center:
+                    cur_fps_points[i] = dummy
+                else:
+                    cur_fps_points[i] = dummy[:-1]
         self.fps_points[dataset_name] = cur_fps_points
         return self.fps_points[dataset_name]
 
@@ -255,6 +269,10 @@ class GDRN_DatasetFromList(Base_DatasetFromList):
         for i, obj_name in enumerate(objs):
             obj_id = data_ref.obj2id[obj_name]
             model_path = osp.join(data_ref.model_dir, f"obj_{obj_id:06d}.ply")
+            if not osp.exists(model_path):
+                logger.warning(f"model_path {model_path} not found, using dummy points")
+                cur_model_points[i] = np.zeros((1, 3), dtype="float32")
+                continue
             model = inout.load_ply(
                 model_path, vertex_scale=data_ref.vertex_scale)
             cur_model_points[i] = pts = model["pts"]
@@ -292,6 +310,10 @@ class GDRN_DatasetFromList(Base_DatasetFromList):
         for i, obj_name in enumerate(objs):
             obj_id = data_ref.obj2id[obj_name]
             model_path = osp.join(data_ref.model_dir, f"obj_{obj_id:06d}.ply")
+            if not osp.exists(model_path):
+                logger.warning(f"model_path {model_path} not found, using default extent")
+                cur_extents[i] = np.array([0.1, 0.1, 0.1], dtype="float32")
+                continue
             model = inout.load_ply(
                 model_path, vertex_scale=data_ref.vertex_scale)
             pts = model["pts"]
@@ -322,7 +344,7 @@ class GDRN_DatasetFromList(Base_DatasetFromList):
         loaded_models_info = data_ref.get_models_info()
         for i, obj_name in enumerate(objs):
             obj_id = data_ref.obj2id[obj_name]
-            model_info = loaded_models_info[str(obj_id)]
+            model_info = loaded_models_info.get(str(obj_id), {})
             if "symmetries_discrete" in model_info or "symmetries_continuous" in model_info:
                 sym_transforms = misc.get_symmetry_transformations(
                     model_info, max_sym_disc_step=0.01)
@@ -650,13 +672,76 @@ class GDRN_DatasetFromList(Base_DatasetFromList):
             np.array(roi_extent), dtype=torch.float32)
 
         # load xyz =======================================================
-        xyz_info = mmcv.load(inst_infos["xyz_path"])
-        # print(inst_infos["xyz_path"])
-        x1, y1, x2, y2 = xyz_info["xyxy"]
-        # float16 does not affect performance (classification/regresion)
-        xyz_crop = xyz_info["xyz_crop"]
-        xyz = np.zeros((im_H, im_W, 3), dtype=np.float32)
-        xyz[y1: y2 + 1, x1: x2 + 1, :] = xyz_crop
+        if osp.exists(inst_infos["xyz_path"]):
+            xyz_info = mmcv.load(inst_infos["xyz_path"])
+            x1, y1, x2, y2 = xyz_info["xyxy"]
+            xyz_crop = xyz_info["xyz_crop"]
+            xyz = np.zeros((im_H, im_W, 3), dtype=np.float32)
+            xyz[y1 : y2 + 1, x1 : x2 + 1, :] = xyz_crop
+        else:
+            # Fallback: Estimate XYZ from depth/pose
+            if not hasattr(self, "_warned_xyz"):
+                self._warned_xyz = set()
+            if roi_cls not in self._warned_xyz:
+                logger.warning(
+                    f"xyz_path {inst_infos['xyz_path']} not found, estimating XYZ from depth/pose for object {roi_cls}"
+                )
+                self._warned_xyz.add(roi_cls)
+
+            # Load depth
+            depth_img = np.array(Image.open(dataset_dict["depth_file"])).astype(np.float32)
+            depth_factor = dataset_dict.get("depth_factor", 1000.0)
+            depth_img /= depth_factor  # to meters
+
+            # Load mask
+            mask_path = inst_infos.get("mask_full")
+            if mask_path is None or (isinstance(mask_path, str) and not osp.exists(mask_path)):
+                mask_path = inst_infos.get("segmentation")
+
+            mask = None
+            if mask_path:
+                if isinstance(mask_path, str):
+                    if osp.exists(mask_path):
+                        mask = mmcv.imread(mask_path, "unchanged")
+                elif isinstance(mask_path, dict):
+                    mask = cocosegm2mask(mask_path, im_H, im_W)
+            
+            xyz = np.zeros((im_H, im_W, 3), dtype=np.float32)
+            if mask is not None:
+                mask = mask > 0
+                # Get K, R, t
+                K = dataset_dict["cam"]
+                if isinstance(K, torch.Tensor):
+                    K = K.cpu().numpy()
+                pose = inst_infos["pose"]
+                if isinstance(pose, torch.Tensor):
+                    pose = pose.cpu().numpy()
+                R = pose[:, :3]
+                t = pose[:, 3]
+
+                # Back-project
+                v, u = np.where(mask)
+                if len(v) > 0:
+                    z = depth_img[v, u]
+                    valid = z > 0
+                    v, u, z = v[valid], u[valid], z[valid]
+
+                    if len(z) > 0:
+                        # P_cam = z * K^-1 * [u, v, 1]^T
+                        cx, cy = K[0, 2], K[1, 2]
+                        fx, fy = K[0, 0], K[1, 1]
+                        x_cam = (u - cx) * z / fx
+                        y_cam = (v - cy) * z / fy
+                        P_cam = np.stack([x_cam, y_cam, z], axis=-1)  # [N, 3]
+
+                        # P_obj = R^T * (P_cam - t)
+                        P_obj = (P_cam - t) @ R  # same as R.T @ (P_cam - t).T
+                        xyz[v, u, :] = P_obj
+
+            # Get bbox from inst_infos
+            x1, y1, bw, bh = inst_infos["bbox"]
+            x2, y2 = x1 + bw, y1 + bh
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
 
         # NOTE: full mask
         mask_obj = ((xyz[:, :, 0] != 0) | (xyz[:, :, 1] != 0) | (

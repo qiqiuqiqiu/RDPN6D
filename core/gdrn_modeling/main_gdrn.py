@@ -39,6 +39,12 @@ def setup(args):
     cfg = Config.fromfile(args.config_file)
     if args.opts is not None:
         cfg.merge_from_dict(args.opts)
+
+    if not torch.cuda.is_available():
+        cfg.MODEL.DEVICE = "cpu"
+        cfg.SOLVER.AMP.ENABLED = False
+    else:
+        cfg.MODEL.DEVICE = "cuda"
     ############## pre-process some cfg options ######################
     # NOTE: check if need to set OUTPUT_DIR automatically
     if cfg.OUTPUT_DIR.lower() == "auto":
@@ -136,7 +142,7 @@ def main(args):
     if args.num_gpus > 1 and args.strategy is None:
         args.strategy = "ddp"
     Lite(
-        accelerator="gpu",
+        accelerator="gpu" if torch.cuda.is_available() else "cpu",
         strategy=args.strategy,
         devices=args.num_gpus,
         num_nodes=args.num_machines,

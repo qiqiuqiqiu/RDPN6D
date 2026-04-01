@@ -3,7 +3,9 @@ import numpy as np
 import itertools
 
 
-def batch_data(cfg, data, device="cuda", phase="train"):
+def batch_data(cfg, data, device=None, phase="train"):
+    if device is None:
+        device = cfg.MODEL.DEVICE
     if phase != "train":
         return batch_data_test(cfg, data, device=device)
 
@@ -63,7 +65,9 @@ def batch_data(cfg, data, device="cuda", phase="train"):
     return batch
 
 
-def batch_data_test(cfg, data, device="cuda"):
+def batch_data_test(cfg, data, device=None):
+    if device is None:
+        device = cfg.MODEL.DEVICE
     batch = {}
     if not isinstance(data, list):  # bs = 1
         data = [data]
