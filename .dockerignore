@@ -1,0 +1,15 @@
+.git
+.cache
+.codex
+output
+datasets
+*.pth
+*.pt
+*.ckpt
+*.log
+__pycache__
+*.pyc
+*.pyo
+*.swp
+.DS_Store
+

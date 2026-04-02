@@ -783,15 +783,7 @@ def save_result_of_dataset(cfg, model, data_loader, output_dir, dataset_name):
                 if VIS:
                     image = cv2.imread(_input["file_name"], cv2.IMREAD_COLOR)
                     if image is not None:
-                        img_vis = vis_image_bboxes_cv2(
-                            image,
-                            boxes,
-                            labels=[
-                                "{}|{:.3f}".format(obj_names[int(label)], float(score))
-                                for label, score in zip(labels, scores)
-                            ],
-                            draw_center=True,
-                        )
+                        img_vis = image.copy()
                         K = _input["cam"]
                         if isinstance(K, torch.Tensor):
                             K = K.detach().cpu().numpy()
@@ -800,7 +792,8 @@ def save_result_of_dataset(cfg, model, data_loader, output_dir, dataset_name):
 
                         for pred_idx, (label, R_pred, t_pred) in enumerate(zip(labels, ego_rots, transes)):
                             bbox3d = evaluator.model_bbox3d[int(label)]
-                            kpts_2d = misc.project_pts(bbox3d, K, R_pred, t_pred)
+                            bbox3d_corners = bbox3d[:8]
+                            kpts_2d = misc.project_pts(bbox3d_corners, K, R_pred, t_pred)
                             img_vis = misc.draw_projected_box3d(
                                 img_vis,
                                 kpts_2d,
@@ -810,6 +803,38 @@ def save_result_of_dataset(cfg, model, data_loader, output_dir, dataset_name):
                             center_2d = misc.project_pts(np.array([[0.0, 0.0, 0.0]], dtype=np.float32), K, R_pred, t_pred)
                             cx, cy = center_2d[0].astype(np.int32)
                             cv2.circle(img_vis, (cx, cy), 3, (0, 0, 255), -1)
+                            mins = bbox3d_corners.min(axis=0)
+                            maxs = bbox3d_corners.max(axis=0)
+                            axis_len = 0.35 * float(np.max(maxs - mins))
+                            axis_pts_3d = np.array(
+                                [
+                                    [0.0, 0.0, 0.0],
+                                    [axis_len, 0.0, 0.0],
+                                    [0.0, axis_len, 0.0],
+                                    [0.0, 0.0, axis_len],
+                                ],
+                                dtype=np.float32,
+                            )
+                            axis_pts_2d = misc.project_pts(axis_pts_3d, K, R_pred, t_pred).astype(np.int32)
+                            origin = tuple(axis_pts_2d[0])
+                            cv2.line(img_vis, origin, tuple(axis_pts_2d[1]), (0, 0, 255), 2, cv2.LINE_AA)
+                            cv2.line(img_vis, origin, tuple(axis_pts_2d[2]), (0, 255, 0), 2, cv2.LINE_AA)
+                            cv2.line(img_vis, origin, tuple(axis_pts_2d[3]), (255, 0, 0), 2, cv2.LINE_AA)
+                            cv2.putText(img_vis, "X", tuple(axis_pts_2d[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1, cv2.LINE_AA)
+                            cv2.putText(img_vis, "Y", tuple(axis_pts_2d[2]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+                            cv2.putText(img_vis, "Z", tuple(axis_pts_2d[3]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1, cv2.LINE_AA)
+                            text_x = int(np.clip(np.min(kpts_2d[:, 0]), 0, max(img_vis.shape[1] - 1, 0)))
+                            text_y = int(np.clip(np.min(kpts_2d[:, 1]) - 6, 12, max(img_vis.shape[0] - 1, 12)))
+                            cv2.putText(
+                                img_vis,
+                                "{}|{:.3f}".format(obj_names[int(label)], float(scores[pred_idx])),
+                                (text_x, text_y),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.5,
+                                (0, 255, 0),
+                                1,
+                                cv2.LINE_AA,
+                            )
 
                         vis_name = _input["scene_im_id"].replace("/", "_") + ".jpg"
                         cv2.imwrite(osp.join(vis_dir, vis_name), img_vis)

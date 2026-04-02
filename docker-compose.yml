@@ -1,0 +1,31 @@
+version: "3.9"
+
+services:
+  rdpn6d:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rdpn6d:local
+    container_name: rdpn6d
+    shm_size: "16gb"
+    stdin_open: true
+    tty: true
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - DISPLAY=${DISPLAY}
+    volumes:
+      - ./:/workspace/RDPN6D
+      - ./datasets:/workspace/RDPN6D/datasets
+      - ./output:/workspace/RDPN6D/output
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /dev/bus/usb:/dev/bus/usb
+    working_dir: /workspace/RDPN6D
+    privileged: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
