@@ -261,7 +261,7 @@ class LM_Dataset(object):
                         "trans": t,
                         "centroid_2d": proj,  # absolute (cx, cy)
                         "segmentation": mask_rle,
-                        "mask_full_file": mask_file,  # TODO: load as mask_full, rle
+                        "mask_full": mask_file,  # TODO: load as mask_full, rle
                     }
                     if "test" not in self.name:
                         xyz_path = osp.join(xyz_root, f"{int_im_id:06d}_{anno_i:06d}.pkl")
@@ -390,11 +390,11 @@ SPLITS_LM = dict(
             for _obj in LM_13_OBJECTS
         ],
         image_prefixes=[
-            osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/test/{:06d}".format(ref.lm_full.obj2id[_obj]))
+            osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/train/{:06d}".format(ref.lm_full.obj2id[_obj]))
             for _obj in LM_13_OBJECTS
         ],
         xyz_prefixes=[
-            osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/test/xyz_crop/{:06d}".format(ref.lm_full.obj2id[_obj]))
+            osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/train/xyz_crop/{:06d}".format(ref.lm_full.obj2id[_obj]))
             for _obj in LM_13_OBJECTS
         ],
         scale_to_meter=0.001,
@@ -450,11 +450,11 @@ SPLITS_LM = dict(
             for _obj in LM_OCC_OBJECTS
         ],
         image_prefixes=[
-            osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/test/{:06d}".format(ref.lmo_full.obj2id[_obj]))
+            osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/train/{:06d}".format(ref.lmo_full.obj2id[_obj]))
             for _obj in LM_OCC_OBJECTS
         ],
         xyz_prefixes=[
-            osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/test/xyz_crop/{:06d}".format(ref.lmo_full.obj2id[_obj]))
+            osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/train/xyz_crop/{:06d}".format(ref.lmo_full.obj2id[_obj]))
             for _obj in LM_OCC_OBJECTS
         ],
         scale_to_meter=0.001,
@@ -531,9 +531,21 @@ for obj in ref.lm_full.objects:
                 models_root=osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/models"),
                 objs=[obj],  # only this obj
                 ann_files=ann_files,
-                image_prefixes=[osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/test/{:06d}").format(ref.lm_full.obj2id[obj])],
+                image_prefixes=[
+                    osp.join(
+                        DATASETS_ROOT,
+                        "BOP_DATASETS/lm/{}/{:06d}".format(
+                            "train" if split in ["train", "all"] else "test", ref.lm_full.obj2id[obj]
+                        ),
+                    )
+                ],
                 xyz_prefixes=[
-                    osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/test/xyz_crop/{:06d}".format(ref.lm_full.obj2id[obj]))
+                    osp.join(
+                        DATASETS_ROOT,
+                        "BOP_DATASETS/lm/{}/xyz_crop/{:06d}".format(
+                            "train" if split in ["train", "all"] else "test", ref.lm_full.obj2id[obj]
+                        ),
+                    )
                 ],
                 scale_to_meter=0.001,
                 with_masks=True,  # (load masks but may not use it)

@@ -128,6 +128,10 @@ def load_detections_into_dataset(
         list[dict]: the same format as dataset_dicts, but added proposal field.
     """
 
+    if not os.path.exists(det_file):
+        logger.warning("Detection file not found for %s: %s. Keep original annotations and fall back to GT boxes.", dataset_name, det_file)
+        return dataset_dicts
+
     logger.info("Loading detections for {} from: {}".format(dataset_name, det_file))
     detections = mmcv.load(det_file)
 

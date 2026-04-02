@@ -18,6 +18,7 @@ import datetime
 import io
 import itertools
 import logging
+import os
 import os.path as osp
 import random
 import subprocess
@@ -76,6 +77,11 @@ class GDRN_EvaluatorCustom(DatasetEvaluator):
         self.models_3d = [
             inout.load_ply(model_path, vertex_scale=self.data_ref.vertex_scale) for model_path in self.model_paths
         ]
+        self.model_bbox3d = [misc.get_bbox3d_and_center(model["pts"]) for model in self.models_3d]
+        self.vis_dir = osp.join(self._output_dir, "vis")
+        self.vis_enabled = bool(cfg.TEST.get("VIS", False))
+        if self.vis_enabled:
+            mmcv.mkdir_or_exist(self.vis_dir)
 
         self.eval_precision = cfg.VAL.get("EVAL_PRECISION", False)
         self._logger.info(f"eval precision: {self.eval_precision}")
@@ -94,6 +100,44 @@ class GDRN_EvaluatorCustom(DatasetEvaluator):
 
     def reset(self):
         self._predictions = OrderedDict()
+
+    def _save_vis(self, file_name, cls_name, score, K, bbox_xyxy, R_pred, t_pred):
+        if not self.vis_enabled:
+            return
+
+        image = cv2.imread(file_name, cv2.IMREAD_COLOR)
+        if image is None:
+            self._logger.warning("Failed to read image for visualization: %s", file_name)
+            return
+
+        if isinstance(K, torch.Tensor):
+            K = K.detach().cpu().numpy()
+        else:
+            K = np.asarray(K)
+
+        img_vis = vis_image_bboxes_cv2(
+            image,
+            np.array([bbox_xyxy], dtype=np.float32),
+            labels=[f"{cls_name}|{float(score):.3f}"],
+            draw_center=True,
+        )
+
+        label_idx = self.obj_names.index(cls_name)
+        bbox3d = self.model_bbox3d[label_idx]
+        kpts_2d = misc.project_pts(bbox3d, K, R_pred, t_pred)
+        img_vis = misc.draw_projected_box3d(
+            img_vis,
+            kpts_2d,
+            middle_color=None,
+            bottom_color=(128, 128, 128),
+        )
+
+        center_2d = misc.project_pts(np.array([[0.0, 0.0, 0.0]], dtype=np.float32), K, R_pred, t_pred)
+        cx, cy = center_2d[0].astype(np.int32)
+        cv2.circle(img_vis, (cx, cy), 3, (0, 0, 255), -1)
+
+        vis_name = osp.splitext("/".join(file_name.split("/")[-3:]))[0].replace("/", "_") + ".jpg"
+        cv2.imwrite(osp.join(self.vis_dir, vis_name), img_vis)
 
     def _maybe_adapt_label_cls_name(self, label):
         if self.train_objs is not None:
@@ -213,6 +257,10 @@ class GDRN_EvaluatorCustom(DatasetEvaluator):
                 result = {"score": score, "R": rot_est,
                           "t": trans_est, "time": output["time"]}
                 self._predictions[cls_name][file_name] = result
+                test_bbox_type = cfg.TEST.TEST_BBOX_TYPE
+                bbox_key = "bbox" if test_bbox_type == "gt" else f"bbox_{test_bbox_type}"
+                bbox_xyxy = _input[bbox_key][inst_i].detach().cpu().numpy()
+                self._save_vis(file_name, cls_name, score, K, bbox_xyxy, rot_est, trans_est)
 
     def process_net_and_pnp(self, inputs, outputs, out_dict, pnp_type="iter"):
         """Initialize with network prediction (learned PnP) + iter PnP
@@ -352,6 +400,10 @@ class GDRN_EvaluatorCustom(DatasetEvaluator):
                 result = {
                     "score": score, "R": pose_est[:3, :3], "t": pose_est[:3, 3], "time": output["time"]}
                 self._predictions[cls_name][file_name] = result
+                test_bbox_type = cfg.TEST.TEST_BBOX_TYPE
+                bbox_key = "bbox" if test_bbox_type == "gt" else f"bbox_{test_bbox_type}"
+                bbox_xyxy = _input[bbox_key][inst_i].detach().cpu().numpy()
+                self._save_vis(file_name, cls_name, score, K, bbox_xyxy, pose_est[:3, :3], pose_est[:3, 3])
 
     def process_pnp_ransac(self, inputs, outputs, out_dict):
         """
@@ -477,6 +529,10 @@ class GDRN_EvaluatorCustom(DatasetEvaluator):
                 result = {
                     "score": score, "R": pose_est[:3, :3], "t": pose_est[:3, 3], "time": output["time"]}
                 self._predictions[cls_name][file_name] = result
+                test_bbox_type = cfg.TEST.TEST_BBOX_TYPE
+                bbox_key = "bbox" if test_bbox_type == "gt" else f"bbox_{test_bbox_type}"
+                bbox_xyxy = _input[bbox_key][inst_i].detach().cpu().numpy()
+                self._save_vis(file_name, cls_name, score, K, bbox_xyxy, pose_est[:3, :3], pose_est[:3, 3])
 
     def evaluate(self):
         # bop toolkit eval in subprocess, no return value

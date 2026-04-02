@@ -6,6 +6,7 @@ import copy
 import datetime
 import itertools
 import logging
+import os
 import os.path as osp
 import random
 import time
@@ -58,6 +59,7 @@ class GDRN_Evaluator(DatasetEvaluator):
         self.models_3d = [
             inout.load_ply(model_path, vertex_scale=self.data_ref.vertex_scale) for model_path in self.model_paths
         ]
+        self.model_bbox3d = [misc.get_bbox3d_and_center(model["pts"]) for model in self.models_3d]
 
         # eval cached
         if cfg.VAL.EVAL_CACHED or cfg.VAL.EVAL_PRINT_ONLY:
@@ -722,7 +724,10 @@ def save_result_of_dataset(cfg, model, data_loader, output_dir, dataset_name):
 
     total = len(data_loader)  # inference data loader must have a fixed length
     results = OrderedDict()
-    VIS = False
+    VIS = bool(cfg.TEST.get("VIS", False))
+    vis_dir = osp.join(output_dir, "vis")
+    if VIS:
+        mmcv.mkdir_or_exist(vis_dir)
 
     logging_interval = 50
     num_warmup = min(5, logging_interval - 1, total - 1)
@@ -733,8 +738,6 @@ def save_result_of_dataset(cfg, model, data_loader, output_dir, dataset_name):
             if idx == num_warmup:
                 start_time = time.perf_counter()
                 total_compute_time = 0
-            if VIS:
-                images_ori = [_input["image"].clone() for _input in inputs]
             start_compute_time = time.perf_counter()
             outputs = model(inputs)  # NOTE: do model inference
             torch.cuda.synchronize()
@@ -778,15 +781,38 @@ def save_result_of_dataset(cfg, model, data_loader, output_dir, dataset_name):
                     cur_results["masks"] = rles
 
                 if VIS:
-                    import cv2
-                    from lib.vis_utils.image import vis_image_mask_bbox_cv2
+                    image = cv2.imread(_input["file_name"], cv2.IMREAD_COLOR)
+                    if image is not None:
+                        img_vis = vis_image_bboxes_cv2(
+                            image,
+                            boxes,
+                            labels=[
+                                "{}|{:.3f}".format(obj_names[int(label)], float(score))
+                                for label, score in zip(labels, scores)
+                            ],
+                            draw_center=True,
+                        )
+                        K = _input["cam"]
+                        if isinstance(K, torch.Tensor):
+                            K = K.detach().cpu().numpy()
+                        else:
+                            K = np.asarray(K)
 
-                    image = (images_ori[i].detach().cpu().numpy().transpose(1, 2, 0) + 0.5).astype("uint8")
-                    img_vis = vis_image_mask_bbox_cv2(
-                        image, pred_masks, boxes, labels=[obj_names[int(label)] for label in labels]
-                    )
-                    cv2.imshow("img", img_vis.astype("uint8"))
-                    cv2.waitKey()
+                        for pred_idx, (label, R_pred, t_pred) in enumerate(zip(labels, ego_rots, transes)):
+                            bbox3d = evaluator.model_bbox3d[int(label)]
+                            kpts_2d = misc.project_pts(bbox3d, K, R_pred, t_pred)
+                            img_vis = misc.draw_projected_box3d(
+                                img_vis,
+                                kpts_2d,
+                                middle_color=None,
+                                bottom_color=(128, 128, 128),
+                            )
+                            center_2d = misc.project_pts(np.array([[0.0, 0.0, 0.0]], dtype=np.float32), K, R_pred, t_pred)
+                            cx, cy = center_2d[0].astype(np.int32)
+                            cv2.circle(img_vis, (cx, cy), 3, (0, 0, 255), -1)
+
+                        vis_name = _input["scene_im_id"].replace("/", "_") + ".jpg"
+                        cv2.imwrite(osp.join(vis_dir, vis_name), img_vis)
                 results[_input["scene_im_id"]] = cur_results
 
             if (idx + 1) % logging_interval == 0:
