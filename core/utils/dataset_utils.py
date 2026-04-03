@@ -182,8 +182,6 @@ def load_detections_into_dataset(
                 :top_k_per_obj
             ]
             annotations.extend(sel_annos)
-        for anno_i, annotation in enumerate(annotations):
-            annotation['xyz_path'] = os.path.join('/disk2/RGBD-6dpose/GDR-Net/datasets/BOP_DATASETS/lmo/test/xyz_crop/', f"{scene_id:06d}/{im_id:06d}_{anno_i:06d}-xyz.pkl")
         # NOTE: maybe [], no detections
         record["annotations"] = annotations
 

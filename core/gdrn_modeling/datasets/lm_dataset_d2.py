@@ -25,6 +25,22 @@ logger = logging.getLogger(__name__)
 DATASETS_ROOT = osp.normpath(osp.join(PROJ_ROOT, "datasets"))
 
 
+def _resolve_ann_file(ann_file, scene_root):
+    if osp.exists(ann_file):
+        return ann_file
+
+    base, ext = osp.splitext(ann_file)
+    if base.endswith("_all"):
+        for suffix in ("_train", "_test"):
+            candidate = f"{base[:-4]}{suffix}{ext}"
+            if osp.exists(candidate):
+                logger.warning("ann_file %s not found, falling back to %s", ann_file, candidate)
+                return candidate
+
+    logger.warning("ann_file %s not found for scene root %s", ann_file, scene_root)
+    return None
+
+
 class LM_Dataset(object):
     """lm splits."""
 
@@ -46,7 +62,8 @@ class LM_Dataset(object):
         # Filter out non-existent objects/ann_files/prefixes
         valid_indices = []
         for i, ann_file in enumerate(self.ann_files):
-            if osp.exists(ann_file):
+            resolved_ann_file = _resolve_ann_file(ann_file, self.image_prefixes[i])
+            if resolved_ann_file is not None:
                 valid_indices.append(i)
             else:
                 logger.warning(f"ann_file {ann_file} not found, skipping object {self.objs[i]}")
@@ -97,6 +114,9 @@ class LM_Dataset(object):
                 + "dataset_dicts_{}_{}_{}_{}_{}".format(
                     self.name, self.dataset_root, self.with_masks, self.with_depth, __name__
                 )
+                + "".join(self.ann_files)
+                + "".join(self.image_prefixes)
+                + "".join([str(x) for x in self.xyz_prefixes])
             ).encode("utf-8")
         ).hexdigest()
         cache_path = osp.join(self.cache_dir, "dataset_dicts_{}_{}.pkl".format(self.name, hashed_file_name))
@@ -110,10 +130,14 @@ class LM_Dataset(object):
         logger.info("loading dataset dicts: {}".format(self.name))
         self.num_instances_without_valid_segmentation = 0
         self.num_instances_without_valid_box = 0
+        self.num_instances_without_xyz = 0
         dataset_dicts = []  # ######################################################
         assert len(self.ann_files) == len(self.image_prefixes), f"{len(self.ann_files)} != {len(self.image_prefixes)}"
         assert len(self.ann_files) == len(self.xyz_prefixes), f"{len(self.ann_files)} != {len(self.xyz_prefixes)}"
         for ann_file, scene_root, xyz_root in zip(tqdm(self.ann_files), self.image_prefixes, self.xyz_prefixes):
+            ann_file = _resolve_ann_file(ann_file, scene_root)
+            if ann_file is None:
+                continue
             # linemod each scene is an object
             with open(ann_file, "r") as f_ann:
                 indices = [line.strip("\r\n") for line in f_ann.readlines()]  # string ids
@@ -266,11 +290,7 @@ class LM_Dataset(object):
                     if "test" not in self.name:
                         xyz_path = osp.join(xyz_root, f"{int_im_id:06d}_{anno_i:06d}.pkl")
                         if not osp.exists(xyz_path):
-                            # skip if xyz_crop not found (it will be generated during training if not exist)
-                            # or just skip this instance if it's crucial
-                            # logger.warning(f"xyz_path {xyz_path} not found, skipping instance")
-                            # continue
-                            pass
+                            self.num_instances_without_xyz += 1
                         inst["xyz_path"] = xyz_path
 
                     model_info = self.models_info[str(obj_id)]
@@ -295,6 +315,12 @@ class LM_Dataset(object):
             logger.warning(
                 "Filtered out {} instances without valid box. "
                 "There might be issues in your dataset generation process.".format(self.num_instances_without_valid_box)
+            )
+        if self.num_instances_without_xyz > 0:
+            logger.warning(
+                "Found %s training instances without xyz_crop pkl. "
+                "The dataloader will fall back to depth-based XYZ unless you pre-generate xyz_crop files.",
+                self.num_instances_without_xyz,
             )
         ##########################################################################
         if self.num_to_load > 0:
