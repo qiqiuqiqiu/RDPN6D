@@ -1,6 +1,6 @@
 _base_ = ["../../_base_/gdrn_base.py"]
 
-OUTPUT_DIR = "output/gdrn/lm/residual_0831_32"
+OUTPUT_DIR = "output/gdrn/lm/residual_0403v2"
 INPUT = dict(
     DZI_PAD_SCALE=1.5,
     COLOR_AUG_PROB=0.0,
@@ -20,12 +20,12 @@ INPUT = dict(
 )
 
 SOLVER = dict(
-    IMS_PER_BATCH=24,
+    IMS_PER_BATCH=48,#24
     LR_SCHEDULER_NAME="flat_and_anneal",
     ANNEAL_METHOD="cosine",  # "cosine"
     ANNEAL_POINT=0.72,
     # REL_STEPS=(0.3125, 0.625, 0.9375),
-    OPTIMIZER_CFG=dict(_delete_=True, type="Ranger", lr=1e-4, weight_decay=0),
+    OPTIMIZER_CFG=dict(_delete_=True, type="Ranger", lr=2e-4, weight_decay=0), #lr=1e-4
     WEIGHT_DECAY=0.0,
     WARMUP_FACTOR=0.001,
     WARMUP_ITERS=1000,

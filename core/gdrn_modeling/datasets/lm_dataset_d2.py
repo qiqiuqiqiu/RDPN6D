@@ -23,6 +23,11 @@ from lib.utils.utils import dprint, iprint, lazy_property
 
 logger = logging.getLogger(__name__)
 DATASETS_ROOT = osp.normpath(osp.join(PROJ_ROOT, "datasets"))
+LM_CUSTOM_SCENE_IDS = {
+    "ape": 2,
+    "benchvise": 1,
+    "bowl": 3,
+}
 
 
 def _resolve_ann_file(ann_file, scene_root):
@@ -89,11 +94,14 @@ class LM_Dataset(object):
         self.num_to_load = data_cfg["num_to_load"]  # -1
         self.filter_invalid = data_cfg["filter_invalid"]
         self.filter_scene = data_cfg.get("filter_scene", False)
+        self.scene_ids = data_cfg.get("scene_ids", None)
         self.debug_im_id = data_cfg.get("debug_im_id", None)
         ##################################################
 
         # NOTE: careful! Only the selected objects
         self.cat_ids = [cat_id for cat_id, obj_name in ref.lm_full.id2obj.items() if obj_name in self.objs]
+        if self.scene_ids is None:
+            self.scene_ids = self.cat_ids
         # map selected objs to [0, num_objs-1]
         self.cat2label = {v: i for i, v in enumerate(self.cat_ids)}  # id_map
         self.label2cat = {label: cat for cat, label in self.cat2label.items()}
@@ -191,7 +199,7 @@ class LM_Dataset(object):
                 K = np.array(cur_cam["cam_K"], dtype=np.float32).reshape(3, 3)
                 depth_factor = 1000.0 / cur_cam["depth_scale"]
                 if self.filter_scene:
-                    if scene_id not in self.cat_ids:
+                    if scene_id not in self.scene_ids:
                         continue
                 record = {
                     "dataset_name": self.name,
@@ -416,11 +424,11 @@ SPLITS_LM = dict(
             for _obj in LM_13_OBJECTS
         ],
         image_prefixes=[
-            osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/train/{:06d}".format(ref.lm_full.obj2id[_obj]))
+            osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/train/{:06d}".format(LM_CUSTOM_SCENE_IDS[_obj]))
             for _obj in LM_13_OBJECTS
         ],
         xyz_prefixes=[
-            osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/train/xyz_crop/{:06d}".format(ref.lm_full.obj2id[_obj]))
+            osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/train/xyz_crop/{:06d}".format(LM_CUSTOM_SCENE_IDS[_obj]))
             for _obj in LM_13_OBJECTS
         ],
         scale_to_meter=0.001,
@@ -432,6 +440,7 @@ SPLITS_LM = dict(
         use_cache=True,
         num_to_load=-1,
         filter_scene=True,
+        scene_ids=[LM_CUSTOM_SCENE_IDS[_obj] for _obj in LM_13_OBJECTS],
         filter_invalid=True,
         ref_key="lm_full",
     ),
@@ -446,11 +455,11 @@ SPLITS_LM = dict(
         ],
         # NOTE: scene root
         image_prefixes=[
-            osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/test/{:06d}").format(ref.lm_full.obj2id[_obj])
+            osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/test/{:06d}").format(LM_CUSTOM_SCENE_IDS[_obj])
             for _obj in LM_13_OBJECTS
         ],
         xyz_prefixes=[
-            osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/test/xyz_crop/{:06d}".format(ref.lm_full.obj2id[_obj]))
+            osp.join(DATASETS_ROOT, "BOP_DATASETS/lm/test/xyz_crop/{:06d}".format(LM_CUSTOM_SCENE_IDS[_obj]))
             for _obj in LM_13_OBJECTS
         ],
         scale_to_meter=0.001,
@@ -462,6 +471,7 @@ SPLITS_LM = dict(
         use_cache=True,
         num_to_load=-1,
         filter_scene=True,
+        scene_ids=[LM_CUSTOM_SCENE_IDS[_obj] for _obj in LM_13_OBJECTS],
         filter_invalid=False,
         ref_key="lm_full",
     ),
@@ -561,7 +571,7 @@ for obj in ref.lm_full.objects:
                     osp.join(
                         DATASETS_ROOT,
                         "BOP_DATASETS/lm/{}/{:06d}".format(
-                            "train" if split in ["train", "all"] else "test", ref.lm_full.obj2id[obj]
+                            "train" if split in ["train", "all"] else "test", LM_CUSTOM_SCENE_IDS[obj]
                         ),
                     )
                 ],
@@ -569,7 +579,7 @@ for obj in ref.lm_full.objects:
                     osp.join(
                         DATASETS_ROOT,
                         "BOP_DATASETS/lm/{}/xyz_crop/{:06d}".format(
-                            "train" if split in ["train", "all"] else "test", ref.lm_full.obj2id[obj]
+                            "train" if split in ["train", "all"] else "test", LM_CUSTOM_SCENE_IDS[obj]
                         ),
                     )
                 ],
@@ -583,6 +593,7 @@ for obj in ref.lm_full.objects:
                 num_to_load=-1,
                 filter_invalid=filter_invalid,
                 filter_scene=True,
+                scene_ids=[LM_CUSTOM_SCENE_IDS[obj]],
                 ref_key="lm_full",
             )
 
